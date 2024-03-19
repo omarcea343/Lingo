@@ -3,36 +3,75 @@ import { eq } from "drizzle-orm";
 import { auth } from "@clerk/nextjs";
 
 import db from "@/db/drizzle";
-import { courses, userProgress } from "./schema";
+import { courses, units, userProgress } from "./schema";
 
 export const getUserProgress = cache(async () => {
-    const {userId} = await auth();
+  const { userId } = await auth();
 
-    if (!userId) {
-        return null;
-    }
+  if (!userId) {
+    return null;
+  }
 
-    const data = await db.query.userProgress.findFirst({
-        where: eq(userProgress.userId, userId),
+  const data = await db.query.userProgress.findFirst({
+    where: eq(userProgress.userId, userId),
+    with: {
+      activeCourse: true,
+    },
+  });
+
+  return data;
+});
+
+export const getUnits = cache(async () => {
+  const userProgress = await getUserProgress();
+
+  if (!userProgress?.activeCourseId) {
+    return [];
+  }
+
+  const data = await db.query.units.findMany({
+    where: eq(units.courseId, userProgress.activeCourseId),
+    with: {
+      lessons: {
         with: {
-            activeCourse: true,
+          challenges: {
+            with: {
+              challengeProgress: true,
+            },
+          },
         },
+      },
+    },
+  });
+
+  const normalizedData = data.map((unit) => {
+    const lessonsWithCompletedStatus = unit.lessons.map((lesson) => {
+      const allCompletedChallenges = lesson.challenges.every((challenge) => {
+        return (
+          challenge.challengeProgress &&
+          challenge.challengeProgress.length > 0 &&
+          challenge.challengeProgress.every((progress) => progress.completed)
+        );
+      });
+
+      return { ...lesson, completed: allCompletedChallenges };
     });
 
-    return data;
+    return { ...units, lessons: lessonsWithCompletedStatus };
+  });
 });
 
 export const getCourses = cache(async () => {
-    const data = await db.query.courses.findMany();
+  const data = await db.query.courses.findMany();
 
-    return data;
+  return data;
 });
 
 export const getCourseById = cache(async (courseId: number) => {
-    const data = await db.query.courses.findFirst({
-        where: eq(courses.id, courseId),
-        //TODO: Populate lessons
-    });
+  const data = await db.query.courses.findFirst({
+    where: eq(courses.id, courseId),
+    //TODO: Populate lessons
+  });
 
-    return data;
+  return data;
 });
